@@ -1,5 +1,6 @@
 use std::{collections::HashMap, mem::Discriminant, sync::Arc};
 
+use futures::future::Future;
 use openmls::{
     credentials::errors::BasicCredentialError,
     framing::{MlsMessageBodyIn, MlsMessageIn},
@@ -28,7 +29,8 @@ use xmtp_proto::xmtp::mls::api::v1::{
 use crate::{
     api::ApiClientWrapper,
     groups::{
-        validated_commit::CommitValidationError, IntentError, MlsGroup, PreconfiguredPolicies,
+        validated_commit::CommitValidationError, GroupError, IntentError, MlsGroup,
+        PreconfiguredPolicies,
     },
     identity::{parse_credential, Identity, IdentityError},
     identity_updates::IdentityUpdateError,
@@ -82,6 +84,9 @@ pub enum ClientError {
     IdentityUpdate(#[from] IdentityUpdateError),
     #[error(transparent)]
     SignatureRequest(#[from] SignatureRequestError),
+    // the box is to prevent infinite cycle between client and group errors
+    #[error(transparent)]
+    Group(#[from] Box<GroupError>),
     #[error("generic:{0}")]
     Generic(String),
 }
@@ -139,6 +144,8 @@ pub enum MessageProcessingError {
     WrongCredentialType(#[from] BasicCredentialError),
     #[error("proto decode error: {0}")]
     DecodeError(#[from] prost::DecodeError),
+    #[error(transparent)]
+    Group(#[from] Box<GroupError>),
     #[error("generic:{0}")]
     Generic(String),
 }
@@ -246,6 +253,18 @@ where
         &self.context.store
     }
 
+    pub fn release_db_connection(&self) -> Result<(), ClientError> {
+        let store = &self.context.store;
+        store.release_connection()?;
+        Ok(())
+    }
+
+    pub fn reconnect_db(&self) -> Result<(), ClientError> {
+        // let store = &self.context.store;
+        self.context.store.reconnect()?;
+        Ok(())
+    }
+
     pub fn identity(&self) -> &Identity {
         &self.context.identity
     }
@@ -270,17 +289,15 @@ where
             GroupMembershipState::Allowed,
             permissions,
         )
-        .map_err(|e| {
-            ClientError::Storage(StorageError::Store(format!("group create error {}", e)))
-        })?;
+        .map_err(Box::new)?;
 
         Ok(group)
     }
 
-    pub(crate) fn create_sync_group(&self) -> Result<MlsGroup, StorageError> {
+    pub(crate) fn create_sync_group(&self) -> Result<MlsGroup, ClientError> {
         log::info!("creating sync group");
-        let sync_group = MlsGroup::create_and_insert_sync_group(self.context.clone())
-            .map_err(|e| StorageError::Store(format!("sync group create error {}", e)))?;
+        let sync_group =
+            MlsGroup::create_and_insert_sync_group(self.context.clone()).map_err(Box::new)?;
 
         Ok(sync_group)
     }
@@ -413,6 +430,31 @@ where
             }
             process_envelope(provider)
         })
+    }
+
+    pub(crate) async fn process_for_id_async<Fut, ProcessingFn, ReturnValue>(
+        &self,
+        entity_id: Vec<u8>,
+        entity_kind: EntityKind,
+        cursor: u64,
+        process_envelope: ProcessingFn,
+    ) -> Result<ReturnValue, MessageProcessingError>
+    where
+        Fut: Future<Output = Result<ReturnValue, MessageProcessingError>>,
+        ProcessingFn: FnOnce(XmtpOpenMlsProvider) -> Fut + Send,
+    {
+        self.store()
+            .transaction_async(move |provider| async move {
+                let is_updated =
+                    provider
+                        .conn()
+                        .update_cursor(entity_id, entity_kind, cursor as i64)?;
+                if !is_updated {
+                    return Err(MessageProcessingError::AlreadyProcessed(cursor));
+                }
+                process_envelope(provider).await
+            })
+            .await
     }
 
     pub(crate) async fn get_key_packages_for_installation_ids(
