@@ -128,20 +128,12 @@ pub enum IdentityError {
     Signature(#[from] xmtp_id::associations::SignatureError),
     #[error(transparent)]
     BasicCredential(#[from] BasicCredentialError),
-    #[error("Legacy key re-use")]
-    LegacyKeyReuse,
     #[error("Uninitialized identity")]
     UninitializedIdentity,
     #[error("Installation key {0}")]
     InstallationKey(String),
-    #[error("Malformed legacy key: {0}")]
-    MalformedLegacyKey(String),
-    #[error("Legacy signature: {0}")]
-    LegacySignature(String),
     #[error(transparent)]
     Crypto(#[from] CryptoError),
-    #[error("legacy key does not match address")]
-    LegacyKeyMismatch,
     #[error(transparent)]
     WalletError(#[from] WalletError),
     #[error(transparent)]
@@ -156,8 +148,6 @@ pub enum IdentityError {
     ED25519Error(#[from] ed25519_dalek::ed25519::Error),
     #[error("The InboxID {id}, associated does not match the stored InboxId {stored}.")]
     InboxIdMismatch { id: InboxId, stored: InboxId },
-    #[error("The address {0} has no associated InboxID")]
-    NoAssociatedInboxId(String),
     #[error("Required identity was not found in cache.")]
     RequiredIdentityNotFound,
     #[error("error creating new identity: {0}")]

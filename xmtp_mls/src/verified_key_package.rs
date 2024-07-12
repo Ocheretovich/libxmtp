@@ -28,14 +28,10 @@ pub enum KeyPackageVerificationError {
     InvalidApplicationId,
     #[error("application id ({0}) does not match the credential address ({1}).")]
     ApplicationIdCredentialMismatch(String, String),
-    #[error("invalid credential")]
-    InvalidCredential,
     #[error(transparent)]
     Association(#[from] AssociationError),
     #[error("invalid lifetime")]
     InvalidLifetime,
-    #[error("generic: {0}")]
-    Generic(String),
     #[error("wrong credential type")]
     WrongCredentialType(#[from] BasicCredentialError),
 }

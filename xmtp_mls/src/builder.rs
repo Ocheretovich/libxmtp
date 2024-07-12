@@ -22,16 +22,8 @@ pub enum ClientBuilderError {
     MissingParameter { parameter: &'static str },
     #[error(transparent)]
     ClientError(#[from] crate::client::ClientError),
-
-    // #[error("Failed to serialize/deserialize state for persistence: {source}")]
-    // SerializationError { source: serde_json::Error },
-    #[error("Database was configured with a different wallet")]
-    StoredIdentityMismatch,
-
     #[error("Inbox ID mismatch with address")]
     InboxIdMismatch,
-    #[error("Uncovered Case")]
-    UncoveredCase,
     #[error("Storage Error")]
     StorageError(#[from] StorageError),
     #[error(transparent)]

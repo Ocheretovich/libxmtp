@@ -140,8 +140,6 @@ pub enum GroupError {
     Diesel(#[from] diesel::result::Error),
     #[error(transparent)]
     AddressValidation(#[from] AddressValidationError),
-    #[error("Public Keys {0:?} are not valid ed25519 public keys")]
-    InvalidPublicKeys(Vec<Vec<u8>>),
     #[error("Commit validation error {0}")]
     CommitValidation(#[from] CommitValidationError),
     #[error("Metadata error {0}")]
@@ -174,10 +172,6 @@ pub enum GroupError {
     NoPSKSupport,
     #[error("Metadata update must specify a metadata field")]
     InvalidPermissionUpdate,
-    #[error("The intent publishing task was cancelled")]
-    PublishCancelled,
-    #[error("the publish failed to complete due to panic")]
-    PublishPanicked,
 }
 
 impl RetryableError for GroupError {

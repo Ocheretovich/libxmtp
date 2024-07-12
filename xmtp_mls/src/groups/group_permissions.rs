@@ -40,14 +40,10 @@ pub enum GroupMutablePermissionsError {
     Deserialization(#[from] prost::DecodeError),
     #[error("policy error {0}")]
     Policy(#[from] PolicyError),
-    #[error("invalid conversation type")]
-    InvalidConversationType,
     #[error("missing policies")]
     MissingPolicies,
     #[error("missing extension")]
     MissingExtension,
-    #[error("invalid permission policy option")]
-    InvalidPermissionPolicyOption,
 }
 
 #[derive(Debug, Clone, PartialEq)]

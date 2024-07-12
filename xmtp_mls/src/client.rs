@@ -7,7 +7,6 @@ use futures::{
 use openmls::{
     credentials::errors::BasicCredentialError,
     framing::{MlsMessageBodyIn, MlsMessageIn},
-    group::GroupEpoch,
     messages::Welcome,
     prelude::tls_codec::{Deserialize, Error as TlsCodecError, Serialize},
 };
@@ -66,8 +65,6 @@ pub enum Network {
 pub enum ClientError {
     #[error(transparent)]
     AddressValidation(#[from] AddressValidationError),
-    #[error("could not publish: {0}")]
-    PublishError(String),
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
     #[error("dieselError: {0}")]
@@ -82,8 +79,6 @@ pub enum ClientError {
     TlsError(#[from] TlsCodecError),
     #[error("key package verification: {0}")]
     KeyPackageVerification(#[from] KeyPackageVerificationError),
-    #[error("syncing errors: {0:?}")]
-    SyncingError(Vec<MessageProcessingError>),
     #[error("Stream inconsistency error: {0}")]
     StreamInconsistency(String),
     #[error("Association error: {0}")]
@@ -138,13 +133,6 @@ pub enum MessageProcessingError {
     ),
     #[error("merge staged commit: {0}")]
     MergeStagedCommit(#[from] openmls::group::MergeCommitError<sql_key_store::SqlKeyStoreError>),
-    #[error(
-        "no pending commit to merge. group epoch is {group_epoch:?} and got {message_epoch:?}"
-    )]
-    NoPendingCommit {
-        message_epoch: GroupEpoch,
-        group_epoch: GroupEpoch,
-    },
     #[error("intent error: {0}")]
     Intent(#[from] IntentError),
     #[error("storage error: {0}")]
