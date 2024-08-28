@@ -26,14 +26,13 @@ use xmtp_proto::{
     },
 };
 
-use super::GroupError;
-
-use crate::client::MessageProcessingError;
-use crate::XmtpApi;
 use crate::{
+    xmtp_openmls_provider::XmtpOpenMlsProvider,
+    client::MessageProcessingError,
+    XmtpApi,
     client::ClientError,
     configuration::DELIMITER,
-    groups::{GroupMessageKind, StoredGroupMessage},
+    groups::{GroupError, GroupMessageKind, StoredGroupMessage, DbConnection},
     storage::{group::StoredGroup, StorageError},
     Client, Store,
 };
@@ -84,8 +83,7 @@ where
         Ok(())
     }
 
-    pub async fn ensure_member_of_all_groups(&self, inbox_id: String) -> Result<(), GroupError> {
-        let conn = self.store().conn()?;
+    pub async fn ensure_member_of_all_groups(&self, inbox_id: String, conn: &DbConnection) -> Result<(), GroupError> {
         let groups = conn.find_groups(None, None, None, None)?;
         for group in groups {
             let group = self.group(group.id)?;
@@ -95,10 +93,9 @@ where
         Ok(())
     }
 
-    pub async fn send_history_request(&self) -> Result<String, GroupError> {
+    pub async fn send_history_request(&self, provider: &XmtpOpenMlsProvider) -> Result<String, GroupError> {
         // find the sync group
-        let conn = self.store().conn()?;
-        let sync_group_id = conn
+        let sync_group_id = provider.conn_ref()
             .find_sync_groups()?
             .pop()
             .ok_or(GroupError::GroupNotFound)?
@@ -115,7 +112,7 @@ where
         )
         .into_bytes();
         let _message_id =
-            sync_group.prepare_message(content_bytes.as_slice(), &conn, move |_time_ns| {
+            sync_group.prepare_message(content_bytes.as_slice(), provider.conn_ref(), move |_time_ns| {
                 PlaintextEnvelope {
                     content: Some(Content::V2(V2 {
                         message_type: Some(Request(history_request.into())),
@@ -125,7 +122,7 @@ where
             })?;
 
         // publish the intent
-        if let Err(err) = sync_group.publish_intents(&conn.into(), self).await {
+        if let Err(err) = sync_group.publish_intents(provider, self).await {
             log::error!("error publishing sync group intents: {:?}", err);
         }
 
@@ -135,10 +132,10 @@ where
     pub(crate) async fn send_history_reply(
         &self,
         contents: MessageHistoryReply,
+        provider: &XmtpOpenMlsProvider,
     ) -> Result<(), GroupError> {
         // find the sync group
-        let conn = self.store().conn()?;
-        let sync_group_id = conn
+        let sync_group_id = provider.conn_ref()
             .find_sync_groups()?
             .pop()
             .ok_or(GroupError::GroupNotFound)?
@@ -162,7 +159,7 @@ where
         .into_bytes();
 
         let _message_id =
-            sync_group.prepare_message(content_bytes.as_slice(), &conn, move |_time_ns| {
+            sync_group.prepare_message(content_bytes.as_slice(), provider.conn_ref(), move |_time_ns| {
                 PlaintextEnvelope {
                     content: Some(Content::V2(V2 {
                         idempotency_key: new_request_id(),
@@ -172,14 +169,13 @@ where
             })?;
 
         // publish the intent
-        if let Err(err) = sync_group.publish_intents(&conn.into(), self).await {
+        if let Err(err) = sync_group.publish_intents(provider, self).await {
             log::error!("error publishing sync group intents: {:?}", err);
         }
         Ok(())
     }
 
-    pub(crate) fn provide_pin(&self, pin_challenge: &str) -> Result<(), GroupError> {
-        let conn = self.store().conn()?;
+    pub(crate) fn provide_pin(&self, pin_challenge: &str, conn: &DbConnection) -> Result<(), GroupError> {
         let sync_group_id = conn
             .find_sync_groups()?
             .pop()
@@ -217,12 +213,11 @@ where
     pub(crate) fn insert_history_bundle(
         &self,
         history_file: &Path,
+        conn: &DbConnection
     ) -> Result<(), MessageHistoryError> {
         let file = File::open(history_file)?;
         let reader = BufReader::new(file);
         let lines = reader.lines();
-
-        let conn = self.store().conn()?;
 
         for line in lines {
             let line = line?;
@@ -245,8 +240,9 @@ where
         &self,
         request_id: &str,
         url: &str,
+        conn: &DbConnection,
     ) -> Result<HistoryReply, MessageHistoryError> {
-        let (history_file, enc_key) = self.write_history_bundle().await?;
+        let (history_file, enc_key) = self.write_history_bundle(conn).await?;
 
         let signing_key = HistoryKeyType::new_chacha20_poly1305_key();
         upload_history_bundle(url, history_file.clone(), signing_key.as_bytes()).await?;
@@ -262,9 +258,9 @@ where
         Ok(history_reply)
     }
 
-    async fn write_history_bundle(&self) -> Result<(PathBuf, HistoryKeyType), MessageHistoryError> {
-        let groups = self.prepare_groups_to_sync().await?;
-        let messages = self.prepare_messages_to_sync().await?;
+    async fn write_history_bundle(&self, conn: &DbConnection) -> Result<(PathBuf, HistoryKeyType), MessageHistoryError> {
+        let groups = self.prepare_groups_to_sync(conn).await?;
+        let messages = self.prepare_messages_to_sync(conn).await?;
 
         let temp_file = std::env::temp_dir().join("history.jsonl.tmp");
         write_to_file(temp_file.as_path(), groups)?;
@@ -283,8 +279,7 @@ where
         Ok((history_file, enc_key))
     }
 
-    async fn prepare_groups_to_sync(&self) -> Result<Vec<StoredGroup>, MessageHistoryError> {
-        let conn = self.store().conn()?;
+    async fn prepare_groups_to_sync(&self, conn: &DbConnection) -> Result<Vec<StoredGroup>, MessageHistoryError> {
         let groups = conn.find_groups(None, None, None, None)?;
         let mut all_groups: Vec<StoredGroup> = vec![];
 
@@ -297,8 +292,8 @@ where
 
     async fn prepare_messages_to_sync(
         &self,
+        conn: &DbConnection
     ) -> Result<Vec<StoredGroupMessage>, MessageHistoryError> {
-        let conn = self.store().conn()?;
         let groups = conn.find_groups(None, None, None, None)?;
         let mut all_messages: Vec<StoredGroupMessage> = vec![];
 
@@ -608,6 +603,7 @@ mod tests {
     use tempfile::NamedTempFile;
     use xmtp_cryptography::utils::generate_local_wallet;
     use xmtp_id::InboxOwner;
+    use anyhow::Error;
 
     use crate::{assert_ok, builder::ClientBuilder, groups::GroupMetadataOptions};
 
@@ -647,21 +643,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_send_history_request() {
+    async fn test_send_history_request() -> Result<(), Error>{
         let wallet = generate_local_wallet();
         let client = ClientBuilder::new_test_client(&wallet).await;
         assert_ok!(client.allow_history_sync().await);
-
+        
         // test that the request is sent, and that the pin code is returned
         let pin_code = client
-            .send_history_request()
+            .send_history_request(&client.mls_provider()?)
             .await
             .expect("history request");
         assert_eq!(pin_code.len(), 4);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_send_history_reply() {
+    async fn test_send_history_reply() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let client = ClientBuilder::new_test_client(&wallet).await;
         assert_ok!(client.allow_history_sync().await);
@@ -672,21 +669,21 @@ mod tests {
         let signing_key = HistoryKeyType::new_chacha20_poly1305_key();
         let encryption_key = HistoryKeyType::new_chacha20_poly1305_key();
         let reply = HistoryReply::new(&request_id, url, backup_hash, signing_key, encryption_key);
-        let result = client.send_history_reply(reply.into()).await;
+        let result = client.send_history_reply(reply.into(), &client.mls_provider()?).await;
         assert_ok!(result);
+        Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_history_messages_stored_correctly() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_history_messages_stored_correctly() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let amal_a = ClientBuilder::new_test_client(&wallet).await;
         let amal_b = ClientBuilder::new_test_client(&wallet).await;
         assert_ok!(amal_b.allow_history_sync().await);
 
         amal_a.sync_welcomes().await.expect("sync_welcomes");
-
         let _sent = amal_b
-            .send_history_request()
+            .send_history_request(&amal_b.mls_provider()?)
             .await
             .expect("history request");
 
@@ -706,6 +703,7 @@ mod tests {
 
         // make sure they are the same group
         assert_eq!(amal_a_sync_group.group_id, amal_b_sync_group.group_id);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -717,9 +715,9 @@ mod tests {
         assert_ok!(amal_b.allow_history_sync().await);
 
         amal_a.sync_welcomes().await.expect("sync_welcomes");
-
+        
         let pin_code = amal_b
-            .send_history_request()
+            .send_history_request(&amal_b.mls_provider().unwrap())
             .await
             .expect("history request");
 
@@ -728,16 +726,17 @@ mod tests {
         // get the first sync group
         let amal_a_sync_group = amal_a.group(amal_a_sync_groups[0].id.clone()).unwrap();
         amal_a_sync_group.sync(&amal_a).await.expect("sync");
-        let pin_challenge_result = amal_a.provide_pin(&pin_code);
+        let amal_a_provider = amal_a.mls_provider().unwrap();
+        let pin_challenge_result = amal_a.provide_pin(&pin_code, amal_a_provider.conn_ref());
         assert_ok!(pin_challenge_result);
 
-        let pin_challenge_result_2 = amal_a.provide_pin("000");
+        let pin_challenge_result_2 = amal_a.provide_pin("000", &amal_a_provider.conn_ref());
         assert!(pin_challenge_result_2.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[ignore]
-    async fn test_request_reply_roundtrip() {
+    async fn test_request_reply_roundtrip() -> Result<(), Error> {
         let options = mockito::ServerOpts {
             host: HISTORY_SERVER_HOST,
             port: HISTORY_SERVER_PORT + 1,
@@ -765,8 +764,9 @@ mod tests {
         let _group_a = amal_a
             .create_group(None, GroupMetadataOptions::default())
             .expect("create group");
-
-        let groups = amal_a.prepare_groups_to_sync().await.unwrap();
+        let amal_a_provider = amal_a.mls_provider()?;
+    
+        let groups = amal_a.prepare_groups_to_sync(&amal_a_provider.conn_ref()).await.unwrap();
 
         let input_file = NamedTempFile::new().unwrap();
         let input_path = input_file.path();
@@ -793,10 +793,10 @@ mod tests {
         assert_ok!(amal_b.allow_history_sync().await);
 
         amal_a.sync_welcomes().await.expect("sync_welcomes");
-
+    
         // amal_b sends a message history request to sync group messages
         let _pin_code = amal_b
-            .send_history_request()
+            .send_history_request(&amal_b.mls_provider()?)
             .await
             .expect("history request");
 
@@ -815,7 +815,7 @@ mod tests {
             encryption_key,
         );
         amal_a
-            .send_history_reply(history_reply.into())
+            .send_history_reply(history_reply.into(), &amal_a_provider)
             .await
             .expect("send reply");
 
@@ -833,10 +833,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(amal_b_messages.len(), 1);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_prepare_groups_to_sync() {
+    async fn test_prepare_groups_to_sync() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let amal_a = ClientBuilder::new_test_client(&wallet).await;
         let _group_a = amal_a
@@ -846,8 +847,9 @@ mod tests {
             .create_group(None, GroupMetadataOptions::default())
             .expect("create group");
 
-        let result = amal_a.prepare_groups_to_sync().await.unwrap();
+        let result = amal_a.prepare_groups_to_sync(amal_a.mls_provider()?.conn_ref()).await.unwrap();
         assert_eq!(result.len(), 2);
+        Ok(())
     }
 
     #[tokio::test]
@@ -866,12 +868,12 @@ mod tests {
         group_b.send_message(b"hi", &amal_a).await.expect("send");
         group_b.send_message(b"hi x2", &amal_a).await.expect("send");
 
-        let messages_result = amal_a.prepare_messages_to_sync().await.unwrap();
+        let messages_result = amal_a.prepare_messages_to_sync(amal_a.mls_provider().unwrap().conn_ref()).await.unwrap();
         assert_eq!(messages_result.len(), 4);
     }
 
     #[tokio::test]
-    async fn test_write_to_file() {
+    async fn test_write_to_file() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let amal_a = ClientBuilder::new_test_client(&wallet).await;
         let group_a = amal_a
@@ -886,21 +888,24 @@ mod tests {
         group_b.send_message(b"hi", &amal_a).await.expect("send");
         group_b.send_message(b"hi", &amal_a).await.expect("send");
 
-        let groups = amal_a.prepare_groups_to_sync().await.unwrap();
-        let messages = amal_a.prepare_messages_to_sync().await.unwrap();
 
-        let temp_file = NamedTempFile::new().expect("Unable to create temp file");
+        let amal_a_provider = amal_a.mls_provider()?;
+        let groups = amal_a.prepare_groups_to_sync(&amal_a_provider.conn_ref()).await.unwrap();
+        let messages = amal_a.prepare_messages_to_sync(&amal_a_provider.conn_ref()).await.unwrap();
+
+        let temp_file = NamedTempFile::new()?;
         let wrote_groups = write_to_file(temp_file.path(), groups);
         assert!(wrote_groups.is_ok());
         let wrote_messages = write_to_file(temp_file.path(), messages);
         assert!(wrote_messages.is_ok());
 
-        let file = File::open(temp_file.path()).expect("Unable to open test file");
+        let file = File::open(temp_file.path())?;
         let reader = BufReader::new(file);
         let n_lines_written = reader.lines().count();
         assert_eq!(n_lines_written, 6);
 
-        std::fs::remove_file(temp_file).expect("Unable to remove test file");
+        std::fs::remove_file(temp_file)?;
+        Ok(())
     }
 
     #[test]
@@ -1004,7 +1009,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn test_prepare_history_reply() {
+    async fn test_prepare_history_reply() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let amal_a = ClientBuilder::new_test_client(&wallet).await;
         let amal_b = ClientBuilder::new_test_client(&wallet).await;
@@ -1029,14 +1034,15 @@ mod tests {
             .with_body("encrypted_content")
             .create();
 
-        let reply = amal_a.prepare_history_reply(&request_id, &url).await;
+        let reply = amal_a.prepare_history_reply(&request_id, &url, &amal_a.mls_provider()?.conn_ref()).await;
         assert!(reply.is_ok());
         _m.assert_async().await;
         server.reset();
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_insert_history_bundle() {
+    async fn test_insert_history_bundle() -> Result<(), Error> {
         let wallet = generate_local_wallet();
         let amal_a = ClientBuilder::new_test_client(&wallet).await;
         let amal_b = ClientBuilder::new_test_client(&wallet).await;
@@ -1050,7 +1056,7 @@ mod tests {
             .expect("send message");
 
         let (bundle_path, enc_key) = amal_a
-            .write_history_bundle()
+            .write_history_bundle(&amal_a.mls_provider()?.conn_ref())
             .await
             .expect("Unable to write history bundle");
 
@@ -1059,8 +1065,9 @@ mod tests {
         decrypt_history_file(&bundle_path, output_file.path(), converted_key)
             .expect("Unable to decrypt history file");
 
-        let inserted = amal_b.insert_history_bundle(output_file.path());
+        let inserted = amal_b.insert_history_bundle(output_file.path(), amal_b.mls_provider().unwrap().conn_ref());
         assert!(inserted.is_ok());
+        Ok(())
     }
 
     #[tokio::test]

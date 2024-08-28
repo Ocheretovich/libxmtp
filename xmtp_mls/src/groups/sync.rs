@@ -441,7 +441,7 @@ impl MlsGroup {
 
                             // ensure the requester is a member of all the groups
                             let _ = client
-                                .ensure_member_of_all_groups(sender_inbox_id)
+                                .ensure_member_of_all_groups(sender_inbox_id, provider.conn_ref())
                                 .await
                                 .map_err(|e| MessageProcessingError::Group(Box::new(e)));
 
@@ -451,9 +451,9 @@ impl MlsGroup {
                                     "history sync url not set".to_string(),
                                 ));
                             };
-                            match client.prepare_history_reply(&request_id, url).await {
+                            match client.prepare_history_reply(&request_id, url, provider.conn_ref()).await {
                                 Ok(history_reply) => client
-                                    .send_history_reply(history_reply.into())
+                                    .send_history_reply(history_reply.into(), provider)
                                     .await
                                     .map_err(|e| {
                                         MessageProcessingError::Generic(format!(
@@ -514,7 +514,7 @@ impl MlsGroup {
                                 .map_err(|e| MessageProcessingError::Generic(format!("{e}")))?;
 
                             client
-                                .insert_history_bundle(&messages_path)
+                                .insert_history_bundle(&messages_path, provider.conn_ref())
                                 .map_err(|e| MessageProcessingError::Generic(format!("{e}")))?;
 
                             client
