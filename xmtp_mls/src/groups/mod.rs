@@ -3680,7 +3680,7 @@ mod tests {
             .await
             .unwrap();
         bo.sync_welcomes().await.unwrap();
-        let bo_groups = bo.find_groups(None, None, None, None).unwrap();
+        let bo_groups = bo.find_groups(FindGroupParams::default()).unwrap();
         let bo_group = bo_groups.first().unwrap();
 
         // Both members see the same amount of messages to start
