@@ -456,8 +456,7 @@ where
         &self.context
     }
 
-    ///
-    pub fn smart_contract_signature_verifier(&self) -> &Box<dyn SmartContractSignatureVerifier> {
+    pub fn smart_contract_signature_verifier(&self) -> &dyn SmartContractSignatureVerifier {
         &self.scw_verifier
     }
 

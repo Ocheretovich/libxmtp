@@ -35,10 +35,10 @@ futures = "0.3.30"
 futures-core = "0.3.30"
 getrandom = { version = "0.2", default-features = false }
 hex = "0.4.3"
-openmls = { git = "https://github.com/xmtp/openmls", rev = "1f01177afdf2fe4dbdd55e0caa7c29f5528043ce", default-features = false }
-openmls_basic_credential = { git = "https://github.com/xmtp/openmls", rev = "1f01177afdf2fe4dbdd55e0caa7c29f5528043ce" }
-openmls_rust_crypto = { git = "https://github.com/xmtp/openmls", rev = "1f01177afdf2fe4dbdd55e0caa7c29f5528043ce" }
-openmls_traits = { git = "https://github.com/xmtp/openmls", rev = "1f01177afdf2fe4dbdd55e0caa7c29f5528043ce" }
+openmls = { git = "https://github.com/xmtp/openmls", rev = "f5913be62fed88e0d38d86bf7ad558445cd6e691", default-features = false }
+openmls_basic_credential = { git = "https://github.com/xmtp/openmls", rev = "f5913be62fed88e0d38d86bf7ad558445cd6e691" }
+openmls_rust_crypto = { git = "https://github.com/xmtp/openmls", rev = "f5913be62fed88e0d38d86bf7ad558445cd6e691" }
+openmls_traits = { git = "https://github.com/xmtp/openmls", rev = "f5913be62fed88e0d38d86bf7ad558445cd6e691" }
 pbjson = "0.7.0"
 pbjson-types = "0.7.0"
 prost = "^0.13"

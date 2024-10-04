@@ -1303,7 +1303,7 @@ fn build_group_config(
         .capabilities(capabilities)
         .ciphersuite(CIPHERSUITE)
         .wire_format_policy(WireFormatPolicy::default())
-        .max_past_epochs(MAX_PAST_EPOCHS)
+        .max_past_epochs(MAX_PAST_EPOCHS * 2)
         .use_ratchet_tree_extension(true)
         .build())
 }
@@ -3392,12 +3392,14 @@ mod tests {
         bo_group.send_message("bo 1".as_bytes(), &bo).await.unwrap();
         alix_group.sync(&alix).await.unwrap();
         bo_group.sync(&bo).await.unwrap();
+
         let alix_messages = alix_group
             .find_messages(Some(GroupMessageKind::Application), None, None, None, None)
             .unwrap();
         let bo_messages = bo_group
             .find_messages(Some(GroupMessageKind::Application), None, None, None, None)
             .unwrap();
+
         assert_eq!(alix_messages.len(), 2);
         assert_eq!(bo_messages.len(), 2);
 
@@ -3406,12 +3408,14 @@ mod tests {
             .update_group_name(&alix, "new name".to_string())
             .await
             .unwrap();
+
         // Bo sends a message while 1 epoch behind
         bo_group.send_message("bo 2".as_bytes(), &bo).await.unwrap();
 
         // If max_past_epochs is working, Alix should be able to decrypt Bo's message
         alix_group.sync(&alix).await.unwrap();
         bo_group.sync(&bo).await.unwrap();
+
         let alix_messages = alix_group
             .find_messages(Some(GroupMessageKind::Application), None, None, None, None)
             .unwrap();
