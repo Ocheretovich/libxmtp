@@ -147,8 +147,13 @@ where
             scw_verifier,
             self.history_sync_url,
         );
+
+        #[cfg(not(feature = "message-history"))]
+        let client = Client::new(api_client_wrapper, identity, store, scw_verifier);
+
         Ok(client)
     }
+}
 
 #[cfg(test)]
 mod tests {
